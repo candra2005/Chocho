@@ -47,7 +47,7 @@ namespace ChochoNest.Controller
                                     Role = reader.GetString(reader.GetOrdinal("role"))
                                 };
                             }
-                            return null; // Login failed
+                            return null; 
                         }
                     }
                 }
@@ -55,7 +55,7 @@ namespace ChochoNest.Controller
             catch (Exception ex)
             {
                 MessageBox.Show("Login Error: " + ex.Message);
-                return null; // Login failed due to an exception
+                return null; 
             }
         }
         public bool Register(User user)

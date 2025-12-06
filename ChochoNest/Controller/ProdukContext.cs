@@ -1,4 +1,4 @@
-
+﻿
 using ChochoNest.Database;
 using ChochoNest.Models;
 using Npgsql;
@@ -195,55 +195,87 @@ namespace ChochoNest.Controller
         }
 
 
+        // --- FITUR SIMPAN TRANSAKSI & UPDATE STOK ---
         public void SimpanTransaksi(TransaksiModel transaksiBaru)
         {
-            using (NpgsqlConnection conn = new NpgsqlConnection(_dbContext.connStr))
+            using (var conn = new NpgsqlConnection(_dbContext.connStr))
             {
                 conn.Open();
-                using (NpgsqlTransaction tran = conn.BeginTransaction())
+                using (var tran = conn.BeginTransaction())
                 {
                     try
                     {
+                        // A. Insert ke Tabel Header 'transaksi'
+                        // Kita perlu RETURNING id_transaksi biar dapat ID otomatisnya
+                        string queryHeader = @"
+                    INSERT INTO transaksi (tanggal_transaksi, total_bayar, id_user, id_metode_pembayaran) 
+                    VALUES (@tgl, @total, @idUser, @idMetode) 
+                    RETURNING id_transaksi";
 
-                        string queryHeader = "INSERT INTO transaksi (tanggal_transaksi, total_bayar, id_user, id_metode_pembayaran) VALUES (@tgl, @total, @idUser, @idMetode) RETURNING id_transaksi";
                         int idTransaksiBaru;
 
-                        using (NpgsqlCommand cmd = new NpgsqlCommand(queryHeader, conn, tran))
+                        using (var cmd = new NpgsqlCommand(queryHeader, conn, tran))
                         {
                             cmd.Parameters.AddWithValue("@tgl", DateTime.Now);
                             cmd.Parameters.AddWithValue("@total", transaksiBaru.TotalBayar);
                             cmd.Parameters.AddWithValue("@idUser", transaksiBaru.IdUser);
-                            cmd.Parameters.AddWithValue("@idMetode", transaksiBaru.IdMetodePembayaran);
+
+                            // Cek jika metode pembayaran 0 atau null, set default (misal 1: Tunai)
+                            int metode = transaksiBaru.IdMetodePembayaran == 0 ? 1 : transaksiBaru.IdMetodePembayaran;
+                            cmd.Parameters.AddWithValue("@idMetode", metode);
+
+                            // Eksekusi dan ambil ID baru
                             idTransaksiBaru = Convert.ToInt32(cmd.ExecuteScalar());
                         }
 
-
+                        // B. Loop setiap barang yang dibeli (Detail)
                         foreach (var detail in transaksiBaru.ListDetail)
                         {
-                            string queryDetail = "INSERT INTO detail_transaksi (id_transaksi, id_produk, jumlah_beli, jumlah_pembayaran) VALUES (@idTrans, @idProd, @qty, @sub)";
-                            using (NpgsqlCommand cmdDetail = new NpgsqlCommand(queryDetail, conn, tran))
+                            // 1. Insert ke Tabel 'detail_transaksi'
+                            string queryDetail = @"
+                        INSERT INTO detail_transaksi (id_transaksi, id_produk, jumlah_beli, jumlah_pembayaran) 
+                        VALUES (@idTrans, @idProd, @qty, @subtotal)";
+
+                            using (var cmdDetail = new NpgsqlCommand(queryDetail, conn, tran))
                             {
                                 cmdDetail.Parameters.AddWithValue("@idTrans", idTransaksiBaru);
                                 cmdDetail.Parameters.AddWithValue("@idProd", detail.IdProduk);
                                 cmdDetail.Parameters.AddWithValue("@qty", detail.JumlahBeli);
-                                cmdDetail.Parameters.AddWithValue("@sub", detail.Subtotal);
+                                cmdDetail.Parameters.AddWithValue("@subtotal", detail.Subtotal);
                                 cmdDetail.ExecuteNonQuery();
                             }
 
-                            string queryStok = "UPDATE produk SET stok = stok - @qty WHERE id_produk = @idProd";
-                            using (NpgsqlCommand cmdStok = new NpgsqlCommand(queryStok, conn, tran))
+                            // 2. UPDATE STOK PRODUK (INILAH KUNCINYA!) 🔥
+                            // Logic: Stok lama dikurangi jumlah beli
+                            string queryUpdateStok = @"
+                        UPDATE produk 
+                        SET stok = stok - @qty 
+                        WHERE id_produk = @idProd";
+
+                            using (var cmdStok = new NpgsqlCommand(queryUpdateStok, conn, tran))
                             {
                                 cmdStok.Parameters.AddWithValue("@qty", detail.JumlahBeli);
                                 cmdStok.Parameters.AddWithValue("@idProd", detail.IdProduk);
-                                cmdStok.ExecuteNonQuery();
+
+                                // Eksekusi update
+                                int barisTerubah = cmdStok.ExecuteNonQuery();
+
+                                // Cek error logika (misal ID Produk salah)
+                                if (barisTerubah == 0)
+                                {
+                                    throw new Exception($"Gagal update stok: Produk ID {detail.IdProduk} tidak ditemukan.");
+                                }
                             }
                         }
+
+                        // C. Jika semua lancar, COMMIT (Simpan Permanen)
                         tran.Commit();
                     }
                     catch (Exception ex)
                     {
+                        // D. Jika ada error sedikitpun, ROLLBACK (Batalkan Semua)
                         tran.Rollback();
-                        throw new Exception("Gagal simpan transaksi: " + ex.Message);
+                        throw new Exception("Transaksi Gagal Disimpan: " + ex.Message);
                     }
                 }
             }

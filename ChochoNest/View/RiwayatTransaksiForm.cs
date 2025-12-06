@@ -11,17 +11,27 @@ namespace ChochoNest.View
     public partial class RiwayatTransaksiForm : Form
     {
         public User LoggedInUser { get; private set; }
-        private ProdukContextc _produkContext;
-        private DataGridView? dgvTransactions;
+        private TransaksiContext _transaksiContext;
 
+        private DataGridView dgvTransactions;
         public RiwayatTransaksiForm(User user)
         {
             InitializeComponent();
             LoggedInUser = user;
-            _produkContext = new ProdukContext();
+            // 1. Buat Objek DbContext (untuk memuat koneksi dari .env)
+            ChochoNest.Database.DbContext db = new ChochoNest.Database.DbContext();
+
+            // 2. Ambil connection string dari DbContext (connStr)
+            string connectionString = db.connStr;
+
+            // 3. Masukkan connection string ke Controller Transaksi
+            _transaksiContext = new TransaksiContext(connectionString);
+
             this.Text = $"Riwayat Transaksi - {user.Username} ({user.Role})";
 
             InitializeDataGridView();
+
+            this.Load += RiwayatTransaksiForm_Load;
         }
 
         private void InitializeDataGridView()
@@ -34,93 +44,100 @@ namespace ChochoNest.View
             dgvTransactions.AllowUserToAddRows = false;
             dgvTransactions.RowHeadersVisible = false;
             dgvTransactions.BackgroundColor = System.Drawing.Color.White;
-            dgvTransactions.AlternatingRowsDefaultCellStyle.BackColor = System.Drawing.Color.LightGray;
+            dgvTransactions.AlternatingRowsDefaultCellStyle.BackColor = System.Drawing.Color.WhiteSmoke; // Sedikit lebih terang dari LightGray
+            dgvTransactions.SelectionMode = DataGridViewSelectionMode.FullRowSelect; // Tambahan biar enak diklik
 
-            dgvTransactions.Columns.Add("IdTransaksi", "ID Transaksi");
+            // Kolom ID
+            dgvTransactions.Columns.Add("IdTransaksi", "ID");
             dgvTransactions.Columns["IdTransaksi"].DataPropertyName = "IdTransaksi";
-            dgvTransactions.Columns["IdTransaksi"].Width = 80;
+            dgvTransactions.Columns["IdTransaksi"].Width = 50;
 
+            // Kolom Tanggal
             dgvTransactions.Columns.Add("TanggalTransaksi", "Tanggal");
             dgvTransactions.Columns["TanggalTransaksi"].DataPropertyName = "TanggalTransaksi";
-            dgvTransactions.Columns["TanggalTransaksi"].Width = 150;
+            dgvTransactions.Columns["TanggalTransaksi"].DefaultCellStyle.Format = "dd MMM yyyy HH:mm"; // Format tanggal cantik
+            dgvTransactions.Columns["TanggalTransaksi"].Width = 140;
 
+            // Kolom User
             dgvTransactions.Columns.Add("Username", "User");
             dgvTransactions.Columns["Username"].DataPropertyName = "Username";
             dgvTransactions.Columns["Username"].Width = 100;
 
-            dgvTransactions.Columns.Add("MetodePembayaran", "Metode Pembayaran");
+            // Kolom Payment
+            dgvTransactions.Columns.Add("MetodePembayaran", "Pembayaran");
             dgvTransactions.Columns["MetodePembayaran"].DataPropertyName = "MetodePembayaran";
-            dgvTransactions.Columns["MetodePembayaran"].Width = 120;
+            dgvTransactions.Columns["MetodePembayaran"].Width = 100;
 
-            dgvTransactions.Columns.Add("TotalBayar", "Total Bayar");
+            // Kolom Total
+            dgvTransactions.Columns.Add("TotalBayar", "Total");
             dgvTransactions.Columns["TotalBayar"].DataPropertyName = "TotalBayar";
-            dgvTransactions.Columns["TotalBayar"].DefaultCellStyle.Format = "N0";
+            dgvTransactions.Columns["TotalBayar"].DefaultCellStyle.Format = "C0"; // Format Currency (Rp)
             dgvTransactions.Columns["TotalBayar"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-            dgvTransactions.Columns["TotalBayar"].Width = 100;
+            dgvTransactions.Columns["TotalBayar"].Width = 120;
 
+            // Kolom Detail (Unbound Column)
             DataGridViewTextBoxColumn detailColumn = new DataGridViewTextBoxColumn();
-            detailColumn.Name = "DetailTransaksi";
+            detailColumn.Name = "DetailTransaksi"; // Penting untuk pemanggilan nanti
             detailColumn.HeaderText = "Detail Barang";
             detailColumn.ReadOnly = true;
-            detailColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            detailColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill; // Biar menuhin layar
             dgvTransactions.Columns.Add(detailColumn);
-
 
             this.Controls.Add(dgvTransactions);
         }
 
         private void RiwayatTransaksiForm_Load(object sender, EventArgs e)
         {
-            
             LoadTransactions();
         }
 
         private void LoadTransactions()
         {
-            if (dgvTransactions == null)
+            try
             {
-                MessageBox.Show("DataGridView not initialized.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
+                List<TransaksiModel> transactions;
 
-            List<TransaksiModel> transactions;
-
-            if (LoggedInUser.Role == "admin")
-            {
-                transactions = _produkContext.GetRiwayatTransaksi();
-            }
-            else // Regular user
-            {
-                transactions = _produkContext.GetRiwayatTransaksi(LoggedInUser.Id);
-            }
-
-            if (!transactions.Any())
-            {
-                MessageBox.Show("No transactions found for the current user/admin.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                dgvTransactions.DataSource = null;
-                return;
-            }
-
-            dgvTransactions.DataSource = transactions;
-
-            foreach (DataGridViewRow row in dgvTransactions.Rows)
-            {
-                TransaksiModel? transaction = row.DataBoundItem as TransaksiModel;
-                if (transaction != null && transaction.ListDetail.Any())
+                // Panggil fungsi dari Controller baru
+                if (LoggedInUser.Role == "admin")
                 {
-                    string details = string.Join(", ", transaction.ListDetail.Select(d => $"{d.NamaProduk} ({d.JumlahBeli}x)"));
-                    row.Cells["DetailTransaksi"].Value = details;
+                    transactions = _transaksiContext.GetRiwayatTransaksi(); // Ambil semua
                 }
                 else
                 {
-                    row.Cells["DetailTransaksi"].Value = "No details available";
+                    transactions = _transaksiContext.GetRiwayatTransaksi(LoggedInUser.Id); // Filter user
+                }
+
+                if (!transactions.Any())
+                {
+                    MessageBox.Show("Belum ada riwayat transaksi.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    dgvTransactions.DataSource = null;
+                    return;
+                }
+
+                // Masukkan data ke tabel
+                dgvTransactions.DataSource = transactions;
+
+                // Loop untuk mengisi kolom "Detail Barang" yang manual
+                foreach (DataGridViewRow row in dgvTransactions.Rows)
+                {
+                    var transaction = row.DataBoundItem as TransaksiModel;
+
+                    if (transaction != null && transaction.ListDetail.Any())
+                    {
+                        // Contoh format: "Kopi (2x), Roti (1x)"
+                        string details = string.Join(", ", transaction.ListDetail.Select(d => $"{d.NamaProduk} ({d.JumlahBeli}x)"));
+                        row.Cells["DetailTransaksi"].Value = details;
+                    }
+                    else
+                    {
+                        row.Cells["DetailTransaksi"].Value = "-";
+                    }
                 }
             }
-        }
-
-        private void btnBack_Click(object sender, EventArgs e)
-        {
-            this.Close();
+            catch (Exception ex)
+            {
+                MessageBox.Show("Gagal memuat data: " + ex.Message);
+            }
         }
     }
 }

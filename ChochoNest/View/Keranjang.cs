@@ -2,13 +2,9 @@
 using ChochoNest.Models;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
 using System.Drawing.Printing;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ChochoNest.View
@@ -16,34 +12,45 @@ namespace ChochoNest.View
     public partial class Keranjang : Form
     {
         private List<int> _listIdProduk;
-        private readonly ProdukContext _produkController = new ProdukContext();
-        private List<KeranjangItem> _keranjangItems = new List<KeranjangItem>();
 
-        // FlowLayoutPanel yang akan kita buat secara programmatic jika tidak ada di Designer
+        // Controller Produk (untuk ambil data produk)
+        private readonly ProdukContext _produkController = new ProdukContext();
+
+        // Controller Transaksi (untuk simpan transaksi & potong stok)
+        private readonly TransaksiContext _transaksiController;
+
+        private List<KeranjangItem> _keranjangItems = new List<KeranjangItem>();
+        private User _loggedInUser;
+
+        // Komponen UI
         private FlowLayoutPanel panelKeranjang;
         private Label labelTotal;
         private Button btnBayar;
 
-        public Keranjang(List<int> listIdProduk)
+        // Constructor
+        public Keranjang(User user, List<int> listIdProduk)
         {
             InitializeComponent();
+
+            _loggedInUser = user;
             _listIdProduk = listIdProduk ?? new List<int>();
 
-            // Setup UI
+            // Setup Controller Transaksi dengan koneksi dari DbContext
+            ChochoNest.Database.DbContext db = new ChochoNest.Database.DbContext();
+            _transaksiController = new TransaksiContext(db.connStr);
+
             SetupKeranjangUI();
         }
 
         private void SetupKeranjangUI()
         {
-            // Cari komponen yang mungkin sudah ada di Designer
+            // Cari komponen existing (jika ada) atau buat baru
             panelKeranjang = this.Controls.Find("flowLayoutPanel1", true).FirstOrDefault() as FlowLayoutPanel;
             labelTotal = this.Controls.Find("label2", true).FirstOrDefault() as Label;
             btnBayar = this.Controls.Find("button1", true).FirstOrDefault() as Button;
 
-            // Jika flowLayoutPanel tidak ada, buat baru di area yang tepat
             if (panelKeranjang == null)
             {
-                // Buat FlowLayoutPanel untuk menampilkan item keranjang
                 panelKeranjang = new FlowLayoutPanel
                 {
                     Name = "flowLayoutPanel1",
@@ -56,22 +63,18 @@ namespace ChochoNest.View
                 this.Controls.Add(panelKeranjang);
             }
 
-            // Jika label total tidak ada, buat baru
             if (labelTotal == null)
             {
-                // Label untuk text "Total:"
                 Label lblTotalText = new Label
                 {
                     Text = "Total:",
                     Location = new Point(20, 435),
                     Size = new Size(60, 25),
                     Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                    AutoSize = false,
                     TextAlign = ContentAlignment.MiddleLeft
                 };
                 this.Controls.Add(lblTotalText);
 
-                // Label untuk nilai total
                 labelTotal = new Label
                 {
                     Name = "label2",
@@ -80,13 +83,11 @@ namespace ChochoNest.View
                     Size = new Size(200, 25),
                     Font = new Font("Segoe UI", 12, FontStyle.Bold),
                     ForeColor = Color.Green,
-                    AutoSize = false,
                     TextAlign = ContentAlignment.MiddleLeft
                 };
                 this.Controls.Add(labelTotal);
             }
 
-            // Jika button bayar tidak ada, buat baru
             if (btnBayar == null)
             {
                 btnBayar = new Button
@@ -104,14 +105,10 @@ namespace ChochoNest.View
                 this.Controls.Add(btnBayar);
             }
 
-            // Pastikan button bayar ada event handler
-            if (btnBayar != null)
-            {
-                btnBayar.Click -= button1_Click;
-                btnBayar.Click += button1_Click;
-            }
+            // Pastikan event handler tidak double
+            btnBayar.Click -= button1_Click;
+            btnBayar.Click += button1_Click;
 
-            // Set ukuran form yang sesuai
             this.Size = new Size(820, 540);
             this.StartPosition = FormStartPosition.CenterScreen;
         }
@@ -129,40 +126,37 @@ namespace ChochoNest.View
                 return;
             }
 
-            // Group produk berdasarkan ID dan hitung quantity
+            // Grouping ID produk biar gak double, hitung quantity-nya
             var items = _listIdProduk
                 .GroupBy(x => x)
                 .Select(g => new { IdProduk = g.Key, Qty = g.Count() })
                 .ToList();
+
+            _keranjangItems.Clear();
 
             foreach (var item in items)
             {
                 Produk? p = _produkController.GetProdukById(item.IdProduk);
                 if (p != null)
                 {
-                    if (item.Qty <= p.Stok)
+                    int qtyFinal = item.Qty;
+                    // Cek stok apakah cukup
+                    if (qtyFinal > p.Stok)
+                    {
+                        MessageBox.Show($"Stok {p.NamaProduk} hanya sisa {p.Stok}!", "Info Stok");
+                        qtyFinal = p.Stok;
+                    }
+
+                    if (qtyFinal > 0)
                     {
                         _keranjangItems.Add(new KeranjangItem
                         {
                             ProdukData = p,
-                            Qty = item.Qty
+                            Qty = qtyFinal
                         });
-                    }
-                    else
-                    {
-                        MessageBox.Show($"Stok {p.NamaProduk} tidak mencukupi! Tersedia: {p.Stok}", "Peringatan");
-                        if (p.Stok > 0)
-                        {
-                            _keranjangItems.Add(new KeranjangItem
-                            {
-                                ProdukData = p,
-                                Qty = p.Stok
-                            });
-                        }
                     }
                 }
             }
-
             TampilkanKeranjang();
         }
 
@@ -179,26 +173,13 @@ namespace ChochoNest.View
             {
                 Panel card = BuatCardItem(item);
                 panelKeranjang.Controls.Add(card);
-
                 totalSemua += item.GetSubtotal();
             }
 
             panelKeranjang.ResumeLayout();
 
-            // Update label total yang sudah ada di Designer
             if (labelTotal != null)
-            {
                 labelTotal.Text = "Rp " + totalSemua.ToString("N0");
-            }
-            else
-            {
-                // Cari label lain jika labelTotal null
-                Control? lblTotal = this.Controls.Find("label2", true).FirstOrDefault();
-                if (lblTotal is Label lbl)
-                {
-                    lbl.Text = "Rp " + totalSemua.ToString("N0");
-                }
-            }
         }
 
         private Panel BuatCardItem(KeranjangItem item)
@@ -214,90 +195,26 @@ namespace ChochoNest.View
                 Padding = new Padding(10)
             };
 
-            // Nama Produk
-            Label lblNama = new Label
-            {
-                Text = item.ProdukData?.NamaProduk ?? "Unknown",
-                Location = new Point(10, 10),
-                Size = new Size(300, 25),
-                Font = new Font("Segoe UI", 11, FontStyle.Bold)
-            };
-
-            // Harga Satuan
-            Label lblHarga = new Label
-            {
-                Text = "@ Rp " + (item.ProdukData?.Harga ?? 0).ToString("N0"),
-                Location = new Point(10, 40),
-                ForeColor = Color.Gray,
-                Font = new Font("Segoe UI", 9),
-                AutoSize = true
-            };
-
-            // Subtotal
-            Label lblSubtotal = new Label
-            {
-                Text = "Subtotal: Rp " + item.GetSubtotal().ToString("N0"),
-                Location = new Point(10, 65),
-                Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                ForeColor = Color.Green,
-                AutoSize = true
-            };
+            Label lblNama = new Label { Text = item.ProdukData?.NamaProduk ?? "Unknown", Location = new Point(10, 10), Size = new Size(300, 25), Font = new Font("Segoe UI", 11, FontStyle.Bold) };
+            Label lblHarga = new Label { Text = "@ Rp " + (item.ProdukData?.Harga ?? 0).ToString("N0"), Location = new Point(10, 40), ForeColor = Color.Gray, Font = new Font("Segoe UI", 9), AutoSize = true };
+            Label lblSubtotal = new Label { Text = "Subtotal: Rp " + item.GetSubtotal().ToString("N0"), Location = new Point(10, 65), Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.Green, AutoSize = true };
 
             int btnStartX = card.Width - 180;
 
-            // Tombol Minus (-)
-            Button btnMin = new Button
-            {
-                Text = "-",
-                Size = new Size(40, 40),
-                Location = new Point(btnStartX, 30),
-                Font = new Font("Segoe UI", 16, FontStyle.Bold),
-                BackColor = Color.FromArgb(255, 200, 200),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnMin.FlatAppearance.BorderColor = Color.FromArgb(200, 100, 100);
+            // Tombol -
+            Button btnMin = new Button { Text = "-", Size = new Size(40, 40), Location = new Point(btnStartX, 30), Font = new Font("Segoe UI", 16, FontStyle.Bold), BackColor = Color.FromArgb(255, 200, 200), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
 
-            // Label Quantity
-            Label lblQty = new Label
-            {
-                Text = item.Qty.ToString(),
-                Location = new Point(btnStartX + 45, 32),
-                Size = new Size(50, 35),
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI", 14, FontStyle.Bold),
-                BackColor = Color.WhiteSmoke,
-                BorderStyle = BorderStyle.FixedSingle
-            };
+            // Label Qty
+            Label lblQty = new Label { Text = item.Qty.ToString(), Location = new Point(btnStartX + 45, 32), Size = new Size(50, 35), TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 14, FontStyle.Bold), BackColor = Color.WhiteSmoke, BorderStyle = BorderStyle.FixedSingle };
 
-            // Tombol Plus (+)
-            Button btnPlus = new Button
-            {
-                Text = "+",
-                Size = new Size(40, 40),
-                Location = new Point(btnStartX + 100, 30),
-                Font = new Font("Segoe UI", 16, FontStyle.Bold),
-                BackColor = Color.FromArgb(200, 255, 200),
-                FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
-            };
-            btnPlus.FlatAppearance.BorderColor = Color.FromArgb(100, 200, 100);
+            // Tombol +
+            Button btnPlus = new Button { Text = "+", Size = new Size(40, 40), Location = new Point(btnStartX + 100, 30), Font = new Font("Segoe UI", 16, FontStyle.Bold), BackColor = Color.FromArgb(200, 255, 200), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
 
-            // Tombol Delete (X)
-            Button btnDel = new Button
-            {
-                Text = "✕",
-                Size = new Size(30, 30),
-                Location = new Point(card.Width - 40, 8),
-                ForeColor = Color.Red,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                Cursor = Cursors.Hand,
-                BackColor = Color.White
-            };
+            // Tombol Hapus
+            Button btnDel = new Button { Text = "✕", Size = new Size(30, 30), Location = new Point(card.Width - 40, 8), ForeColor = Color.Red, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 12, FontStyle.Bold), Cursor = Cursors.Hand, BackColor = Color.White };
             btnDel.FlatAppearance.BorderSize = 0;
 
-            // Event Handler - Tombol Plus
+            // Events
             btnPlus.Click += (s, e) =>
             {
                 if (item.ProdukData != null && item.Qty < item.ProdukData.Stok)
@@ -307,11 +224,10 @@ namespace ChochoNest.View
                 }
                 else
                 {
-                    MessageBox.Show("Stok tidak mencukupi!", "Info");
+                    MessageBox.Show("Stok mentok bang!", "Info");
                 }
             };
 
-            // Event Handler - Tombol Minus
             btnMin.Click += (s, e) =>
             {
                 if (item.Qty > 1)
@@ -321,27 +237,17 @@ namespace ChochoNest.View
                 }
             };
 
-            // Event Handler - Tombol Delete
             btnDel.Click += (s, e) =>
             {
-                string namaProduk = item.ProdukData?.NamaProduk ?? "produk ini";
-                var result = MessageBox.Show(
-                    $"Hapus {namaProduk} dari keranjang?",
-                    "Konfirmasi",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question
-                );
+                _keranjangItems.Remove(item);
 
-                if (result == DialogResult.Yes)
+                // Hapus juga dari list ID utama biar sinkron
+                if (item.ProdukData != null)
                 {
-                    _keranjangItems.Remove(item);
-                    TampilkanKeranjang();
-
-                    if (_keranjangItems.Count == 0)
-                    {
-                        MessageBox.Show("Keranjang kosong!", "Info");
-                    }
+                    _listIdProduk.RemoveAll(id => id == item.ProdukData.IdProduk);
                 }
+
+                TampilkanKeranjang();
             };
 
             card.Controls.Add(lblNama);
@@ -357,7 +263,6 @@ namespace ChochoNest.View
 
         private void button1_Click(object sender, EventArgs e)
         {
-            // Tombol Bayar
             if (_keranjangItems.Count == 0)
             {
                 MessageBox.Show("Keranjang kosong!", "Info");
@@ -365,10 +270,9 @@ namespace ChochoNest.View
             }
 
             int total = 0;
-            foreach (var item in _keranjangItems)
-                total += item.GetSubtotal();
+            foreach (var item in _keranjangItems) total += item.GetSubtotal();
 
-            // Tampilkan dialog pembayaran sederhana
+            // Form Popup Pembayaran
             using (Form formBayar = new Form())
             {
                 formBayar.Text = "Pembayaran";
@@ -376,175 +280,95 @@ namespace ChochoNest.View
                 formBayar.StartPosition = FormStartPosition.CenterParent;
                 formBayar.FormBorderStyle = FormBorderStyle.FixedDialog;
                 formBayar.MaximizeBox = false;
-                formBayar.MinimizeBox = false;
 
-                // Label Total
-                Label lblTotal = new Label
-                {
-                    Text = $"Total Belanja: Rp {total:N0}",
-                    Location = new Point(20, 20),
-                    Size = new Size(350, 30),
-                    Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                    ForeColor = Color.Green
-                };
+                Label lblTotal = new Label { Text = $"Total Belanja: Rp {total:N0}", Location = new Point(20, 20), Size = new Size(350, 30), Font = new Font("Segoe UI", 12, FontStyle.Bold), ForeColor = Color.Green };
+                Label lblMetode = new Label { Text = "Metode Pembayaran:", Location = new Point(20, 60), Size = new Size(150, 20) };
 
-                // Label Metode Pembayaran
-                Label lblMetode = new Label
-                {
-                    Text = "Metode Pembayaran:",
-                    Location = new Point(20, 60),
-                    Size = new Size(150, 20),
-                    Font = new Font("Segoe UI", 10)
-                };
-
-                // ComboBox Metode
-                ComboBox cmbMetode = new ComboBox
-                {
-                    Location = new Point(180, 58),
-                    Size = new Size(180, 25),
-                    DropDownStyle = ComboBoxStyle.DropDownList,
-                    Font = new Font("Segoe UI", 10)
-                };
+                ComboBox cmbMetode = new ComboBox { Location = new Point(180, 58), Size = new Size(180, 25), DropDownStyle = ComboBoxStyle.DropDownList };
                 cmbMetode.Items.AddRange(new object[] { "Tunai", "QRIS" });
                 cmbMetode.SelectedIndex = 0;
 
-                // Label Uang Bayar
-                Label lblBayar = new Label
-                {
-                    Text = "Uang Bayar:",
-                    Location = new Point(20, 100),
-                    Size = new Size(150, 20),
-                    Font = new Font("Segoe UI", 10)
-                };
+                Label lblBayar = new Label { Text = "Uang Bayar:", Location = new Point(20, 100), Size = new Size(150, 20) };
+                TextBox txtBayar = new TextBox { Location = new Point(180, 98), Size = new Size(180, 25), Text = total.ToString() };
+                Label lblKembali = new Label { Text = "Kembalian: Rp 0", Location = new Point(20, 140), Size = new Size(350, 25), Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Color.Blue };
 
-                // TextBox Uang Bayar
-                TextBox txtBayar = new TextBox
-                {
-                    Location = new Point(180, 98),
-                    Size = new Size(180, 25),
-                    Font = new Font("Segoe UI", 10),
-                    Text = total.ToString()
-                };
+                Button btnProses = new Button { Text = "Proses Pembayaran", Location = new Point(80, 190), Size = new Size(220, 40), BackColor = Color.Green, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 11, FontStyle.Bold) };
 
-                // Label Kembalian
-                Label lblKembali = new Label
-                {
-                    Text = "Kembalian: Rp 0",
-                    Location = new Point(20, 140),
-                    Size = new Size(350, 25),
-                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                    ForeColor = Color.Blue
-                };
-
-                // Event untuk hitung kembalian otomatis
+                // Hitung kembalian real-time
                 txtBayar.TextChanged += (s, ev) =>
                 {
                     if (int.TryParse(txtBayar.Text, out int bayar))
                     {
                         int kembali = bayar - total;
                         lblKembali.Text = $"Kembalian: Rp {(kembali >= 0 ? kembali : 0):N0}";
-                        lblKembali.ForeColor = kembali >= 0 ? Color.Blue : Color.Red;
-                    }
-                    else
-                    {
-                        lblKembali.Text = "Kembalian: Rp 0";
                     }
                 };
 
-                // Button Proses Bayar
-                Button btnProses = new Button
-                {
-                    Text = "Proses Pembayaran",
-                    Location = new Point(80, 190),
-                    Size = new Size(220, 40),
-                    BackColor = Color.Green,
-                    ForeColor = Color.White,
-                    Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                    FlatStyle = FlatStyle.Flat,
-                    Cursor = Cursors.Hand
-                };
-
+                // Logic Tombol Proses Bayar
                 btnProses.Click += (s, ev) =>
                 {
                     if (!int.TryParse(txtBayar.Text, out int bayar) || bayar < total)
                     {
-                        MessageBox.Show("Uang bayar tidak mencukupi!", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show("Uang bayar kurang, Bos!", "Waduh", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
 
                     int kembali = bayar - total;
                     string metode = cmbMetode.SelectedItem?.ToString() ?? "Tunai";
 
-                    // Simpan transaksi ke database (jika ada)
                     try
                     {
+                        // 1. Simpan Transaksi & Update Stok
                         SimpanTransaksi(total, metode);
+
+                        // 2. Cetak Struk (Ini yang tadi hilang)
+                        CetakStruk(bayar, kembali, metode);
+
+                        // 3. Bersihkan keranjang
+                        _keranjangItems.Clear();
+                        _listIdProduk.Clear();
+                        TampilkanKeranjang();
+
+                        MessageBox.Show("Transaksi Berhasil! Stok sudah berkurang.", "Sukses", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                        formBayar.Close();
+                        this.Close();
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show("Gagal menyimpan transaksi: " + ex.Message, "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show("GAGAL: " + ex.Message, "Error Database", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
-
-                    // Cetak Struk
-                    CetakStruk(bayar, kembali, metode);
-
-                    // Bersihkan keranjang
-                    _keranjangItems.Clear();
-                    TampilkanKeranjang();
-
-                    MessageBox.Show("Transaksi berhasil!", "Sukses", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-                    formBayar.Close();
-                    this.Close();
                 };
 
-                // Tambahkan kontrol ke form
-                formBayar.Controls.Add(lblTotal);
-                formBayar.Controls.Add(lblMetode);
-                formBayar.Controls.Add(cmbMetode);
-                formBayar.Controls.Add(lblBayar);
-                formBayar.Controls.Add(txtBayar);
-                formBayar.Controls.Add(lblKembali);
-                formBayar.Controls.Add(btnProses);
-
+                formBayar.Controls.AddRange(new Control[] { lblTotal, lblMetode, cmbMetode, lblBayar, txtBayar, lblKembali, btnProses });
                 formBayar.ShowDialog();
             }
         }
 
         private void SimpanTransaksi(int total, string metode)
         {
-            // Simpan ke database jika ada ProdukContext dengan method SimpanTransaksi
-            // Uncomment dan sesuaikan jika ada
-            /*
-            try
-            {
-                TransaksiModel trx = new TransaksiModel();
-                trx.TotalBayar = total;
-                trx.IdUser = LoggedInUser.Id;
-                trx.IdMetodePembayaran = (metode == "QRIS") ? 2 : 1;
+            TransaksiModel trx = new TransaksiModel();
+            trx.TotalBayar = total;
+            trx.IdUser = _loggedInUser.Id; // Pakai ID User yang login
+            trx.IdMetodePembayaran = (metode == "QRIS") ? 2 : 1;
 
-                foreach (var item in _keranjangItems)
+            foreach (var item in _keranjangItems)
+            {
+                if (item.ProdukData != null)
                 {
-                    if (item.ProdukData != null)
+                    trx.ListDetail.Add(new DetailTransaksi
                     {
-                        trx.ListDetail.Add(new DetailTransaksi
-                        {
-                            IdProduk = item.ProdukData.IdProduk,
-                            JumlahBeli = item.Qty,
-                            Subtotal = item.GetSubtotal()
-                        });
-                    }
+                        IdProduk = item.ProdukData.IdProduk,
+                        JumlahBeli = item.Qty, // Jumlah beli dikirim ke sini
+                        Subtotal = item.GetSubtotal()
+                    });
                 }
-
-                _produkController.SimpanTransaksi(trx);
             }
-            catch (Exception ex)
-            {
-                throw new Exception("Gagal menyimpan ke database: " + ex.Message);
-            }
-            */
+            // Kirim ke Controller
+            _transaksiController.SimpanTransaksi(trx);
         }
 
+        // --- METHOD CETAK STRUK (SUDAH DIKEMBALIKAN) ---
         private void CetakStruk(int bayar, int kembali, string metode)
         {
             PrintDocument pd = new PrintDocument();
@@ -622,18 +446,23 @@ namespace ChochoNest.View
             };
 
             // Tampilkan Preview
-            PrintPreviewDialog preview = new PrintPreviewDialog();
-            preview.Document = pd;
-            preview.ShowDialog();
+            try
+            {
+                PrintPreviewDialog preview = new PrintPreviewDialog();
+                preview.Document = pd;
+                preview.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Gagal print: " + ex.Message);
+            }
         }
     }
 
-    // Helper Class
     public class KeranjangItem
     {
         public Produk? ProdukData { get; set; }
         public int Qty { get; set; }
-
         public int GetSubtotal()
         {
             return (ProdukData?.Harga ?? 0) * Qty;

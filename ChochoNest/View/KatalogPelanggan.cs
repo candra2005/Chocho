@@ -10,7 +10,7 @@ namespace ChochoNest.View
 {
     public partial class KatalogPelanggan : Form
     {
-        public static List<int> Keranjang = new List<int>();
+        public static List<int> ListBelanjaan = new List<int>();
         private readonly ProdukContext _controller = new ProdukContext();
         
         private Panel panelSidebar;
@@ -126,11 +126,12 @@ namespace ChochoNest.View
             RiwayatTransaksiForm formRiwayat = new RiwayatTransaksiForm(LoggedInUser);
             formRiwayat.ShowDialog();
         }
-
         private void KeranjangBTN_Click(object sender, EventArgs e)
         {
-            Keranjang formKeranjang = new Keranjang(Keranjang);
+            Keranjang formKeranjang = new Keranjang(LoggedInUser, ListBelanjaan);
             formKeranjang.ShowDialog();
+
+            LoadProdukToPanel();
         }
 
         public void LoadProdukToPanel()
@@ -169,7 +170,8 @@ namespace ChochoNest.View
 
         public void TambahKeKeranjang(int idProduk)
         {
-            Keranjang.Add(idProduk);
+            // Panggil nama variabel baru tadi
+            ListBelanjaan.Add(idProduk);
             MessageBox.Show("Berhasil ditambahkan ke keranjang!", "Sukses", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
